@@ -33,9 +33,15 @@ def get_credentials():
 
 
 @st.cache_resource
-def build_service():
-    service = build('gmail', 'v1', credentials=creds)
+def build_service(_creds):
+    service = build('gmail', 'v1', credentials=_creds)
     return service
+
+
+def chunk_messages(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 
 @st.cache_data
@@ -69,12 +75,25 @@ def search_messages(_service, query):
 def delete_messages(service, query):
     messages_to_delete = search_messages(service, query)
 
+    if len(messages_to_delete) > 1000:
+        chunks = list(chunk_messages(messages_to_delete, 1000))
+        st.write("length of ids is too long, chunking...")
+        for chunk in chunks:
+            service.users().messages().batchDelete(
+                userId='me',
+                body={
+                    'ids': [ msg['id'] for msg in chunk]
+                }
+                ).execute()
+        return
+    
     return service.users().messages().batchDelete(
-      userId='me',
-      body={
-          'ids': [ msg['id'] for msg in messages_to_delete]
-      }
-    ).execute()
+        userId='me',
+        body={
+            'ids': [ msg['id'] for msg in messages_to_delete]
+        }
+        ).execute()
+    
     
 
 if __name__ == "__main__":
@@ -82,19 +101,27 @@ if __name__ == "__main__":
     st.title("Gmail Cleaner")
 
     creds = get_credentials()
-    service = build_service()
+    service = build_service(creds)
 
     
     with st.sidebar:
         senders = get_senders(service)
         to_delete = st.multiselect('Select senders emails to delete', options=senders)
+        if st.button("Refresh"):
+            st.cache_data.clear()
+            st.experimental_rerun()
 
     for sender in to_delete:
         query = sender.split("<")[0]
         messages = search_messages(service, query)
         
+        
         st.write(query)
         st.write(len(messages))
+
+        if st.button("Delete Emails", key=sender):
+            response = delete_messages(service, query)
+            st.write(response)
     
     # scott = search_messages(service, "Scott's Bass Lessons")
     # st.write(len(scott))
